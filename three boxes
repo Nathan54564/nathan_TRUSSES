@@ -2,7 +2,8 @@
 // Example Simulation: Three Spirit Robots Connected in a Triangle
 // Each robot is built using SpiritFactory and is attached to the next via a truss.
 // The truss (arm) lengths are updated sinusoidally over time, and each truss
-// is connected via a spherical joint at the robot so that it can freely rotate.
+// is attached with a spherical joint so that it can freely rotate about the
+// attachment point.
 // =============================================================================
 
 #include <cstddef>
@@ -140,22 +141,21 @@ int main(int argc, char* argv[]) {
     spirit1->AddMovingPatchesAndCollisions(terrain);
     spirit2->AddMovingPatchesAndCollisions(terrain);
 
-    // Instead of using a fixed docking call (DockTruss), we now create spherical joints
-    // between each spirit's truss connector and the target spirit body.
-    // This allows the truss to rotate freely about the attachment point.
+    // Instead of fixed docking, we create spherical joints between each Spirit's
+    // truss connector and the target spirit's body so that the truss can rotate freely.
+    // (Assuming each Spirit's first truss is in m_trusses[0] and its connector body is m_body.)
     auto sph0 = chrono_types::make_shared<ChLinkLockSpherical>();
-    // Assume that m_trusses[0].GetConnector() returns the body attached to spirit0’s truss.
-    sph0->Initialize(spirit0->m_trusses[0].GetConnector(), spirit1->m_body,
+    sph0->Initialize(spirit0->m_trusses[0].m_body, spirit1->m_body,
                      ChFrame<>(spirit1->m_body->GetPos() + ChVector3d(-0.25, 0, 0.025), QUNIT));
     sys.AddLink(sph0);
 
     auto sph1 = chrono_types::make_shared<ChLinkLockSpherical>();
-    sph1->Initialize(spirit1->m_trusses[0].GetConnector(), spirit2->m_body,
+    sph1->Initialize(spirit1->m_trusses[0].m_body, spirit2->m_body,
                      ChFrame<>(spirit2->m_body->GetPos() + ChVector3d(-0.25, 0, 0.025), QUNIT));
     sys.AddLink(sph1);
 
     auto sph2 = chrono_types::make_shared<ChLinkLockSpherical>();
-    sph2->Initialize(spirit2->m_trusses[0].GetConnector(), spirit0->m_body,
+    sph2->Initialize(spirit2->m_trusses[0].m_body, spirit0->m_body,
                      ChFrame<>(spirit0->m_body->GetPos() + ChVector3d(-0.25, 0, 0.025), QUNIT));
     sys.AddLink(sph2);
 
@@ -164,9 +164,9 @@ int main(int argc, char* argv[]) {
     double L12 = (pos2 - pos1).Length();
     double L20 = (pos0 - pos2).Length();
 
-    // Sinusoidal parameters for truss (arm) extension/contraction:
-    double amplitude = 0.1;  // Change in length (meters)
-    double frequency = 1.0;  // Oscillation frequency in Hz
+    // Sinusoidal parameters for truss extension/contraction:
+    double amplitude = 0.1;  // Meters
+    double frequency = 1.0;  // Hz
 
     // ---------------------------
     // Visualization Setup (Irrlicht)
@@ -191,12 +191,12 @@ int main(int argc, char* argv[]) {
     while (rclcpp::ok() && vis_irr->Run() && !g_terminate_requested.load()) {
         sim_time = sys.GetChTime();
 
-        // Compute desired truss lengths sinusoidally with phase offsets:
+        // Compute desired truss lengths using sinusoidal functions with phase offsets:
         double desired_length_01 = L01 + amplitude * std::sin(2.0 * PI * frequency * sim_time + 0.0);
         double desired_length_12 = L12 + amplitude * std::sin(2.0 * PI * frequency * sim_time + PI/3.0);
         double desired_length_20 = L20 + amplitude * std::sin(2.0 * PI * frequency * sim_time + 2.0*PI/3.0);
 
-        // Update each Spirit's truss desired length.
+        // Update each Spirit's truss desired arm length.
         spirit0->m_trusses[0].SetArmDesiredLength(desired_length_01);
         spirit1->m_trusses[0].SetArmDesiredLength(desired_length_12);
         spirit2->m_trusses[0].SetArmDesiredLength(desired_length_20);
@@ -204,10 +204,12 @@ int main(int argc, char* argv[]) {
         RCLCPP_INFO(node->get_logger(), "Sim Time: %.3f | Desired Truss Lengths: 01=%.3f, 12=%.3f, 20=%.3f",
                     sim_time, desired_length_01, desired_length_12, desired_length_20);
 
-        // Render and advance simulation
+        // Render the scene
         vis_irr->BeginScene();
         vis_irr->Render();
         vis_irr->EndScene();
+
+        // Advance the simulation
         sys.DoStepDynamics(step_size);
     }
 
