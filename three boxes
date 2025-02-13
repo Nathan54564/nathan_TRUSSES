@@ -1,34 +1,10 @@
+// =============================================================================
+// Example Simulation: Three Spirit Robots Connected in a Triangle
+// Each robot is connected via its truss to form a closed loop, and the truss
+// (arm) lengths are driven sinusoidally over time.
+// =============================================================================
 
-
-// Chrono Physics and Utilities
-#include "chrono/physics/ChSystemSMC.h"
-#include "chrono/physics/ChBodyEasy.h"
-#include "chrono/physics/ChLinkMotorLinearPosition.h"
-#include "chrono/physics/ChContactMaterialSMC.h"
-#include "chrono/assets/ChVisualMaterial.h"
-#include "chrono/core/ChQuaternion.h"
-#include "chrono/core/ChVector3.h"   // Using ChVector3 now
-#include "chrono/utils/ChUtilsInputOutput.h"
-
-// Chrono Collision and Visualization
-#include "chrono/collision/bullet/ChCollisionSystemBullet.h"
-#include "chrono_irrlicht/ChVisualSystemIrrlicht.h"
-
-// Chrono Vehicle and Terrain
-#include "chrono_vehicle/terrain/SCMTerrain.h"
-
-// Chrono Third-Party Utilities
-#include "chrono_thirdparty/filesystem/path.h"
-
-// Include the ChVisualShapeBox header
-#include "chrono/assets/ChVisualShapeBox.h"
-
-// ROS2 Packages
-#include "rclcpp/rclcpp.hpp"
-#include "std_srvs/srv/trigger.hpp"
-#include <std_msgs/msg/int64.hpp>
-
-// Standard Libraries
+#include <cstddef>
 #include <cstdlib>
 #include <chrono>
 #include <thread>
@@ -37,51 +13,35 @@
 #include <csignal>
 #include <cmath>
 
+// Chrono Packages
+#include "chrono/physics/ChSystemSMC.h"
+#include "chrono/utils/ChUtilsInputOutput.h"
+#include "chrono/collision/bullet/ChCollisionSystemBullet.h"
+#include "chrono_irrlicht/ChVisualSystemIrrlicht.h"
+#include "chrono_vehicle/terrain/SCMTerrain.h"
+#include "chrono_thirdparty/filesystem/path.h"
+
+// ROS2 Packages
+#include "rclcpp/rclcpp.hpp"
+#include "std_srvs/srv/trigger.hpp"
+#include <std_msgs/msg/int64.hpp>
+
+// Custom Spirit Classes (ensure these paths are set up in your project)
+#include "sim_tools/SpiritFactory.h"
+#include "sim_tools/Spirit.h"
+#include "sim_tools/Truss.h"
+#include "sim_tools/VariableSoilParams.h"
+#include "sim_tools/SimpleMovingAverage.h"
+#include "sim_tools/SetpointController.h"
+
 // Define PI locally
 constexpr double PI = 3.14159265358979323846;
 
-class Vector3D {
-public:
-    double x, y, z;
-    Vector3D(double x_ = 0.0, double y_ = 0.0, double z_ = 0.0) : x(x_), y(y_), z(z_) {}
-
-    Vector3D operator+(const Vector3D& other) const {
-        return Vector3D(x + other.x, y + other.y, z + other.z);
-    }
-
-    Vector3D operator-(const Vector3D& other) const {
-        return Vector3D(x - other.x, y - other.y, z - other.z);
-    }
-
-    Vector3D operator*(double scalar) const {
-        return Vector3D(x * scalar, y * scalar, z * scalar);
-    }
-
-    double Length() const {
-        return std::sqrt(x * x + y * y + z * z);
-    }
-
-    Vector3D GetNormalized() const {
-        double len = Length();
-        if (len > 0.0) {
-            return Vector3D(x / len, y / len, z / len);
-        }
-        return *this;
-    }
-
-    chrono::ChVector3<double> ToChronoVector() const {
-        return chrono::ChVector3<double>(x, y, z);
-    }
-
-    static Vector3D FromChronoVector(const chrono::ChVector3<double>& vec) {
-        return Vector3D(vec.x(), vec.y(), vec.z());
-    }
-};
-
+// Global flags for termination and simulation advancement
 std::atomic_bool g_terminate_requested(false);
 std::atomic_bool g_advance_simulation(false);
 
-// Signal handler function for graceful termination
+// Signal handler for graceful termination (CTRL-C)
 void signal_handler(int signum) {
     if (signum == SIGINT) {
         g_terminate_requested.store(true);
@@ -89,12 +49,12 @@ void signal_handler(int signum) {
     }
 }
 
-// Service callback function to advance simulation (Retained for optional use)
+// Service callback to trigger simulation advancement (if used)
 void advance_simulation_callback(
     const std::shared_ptr<std_srvs::srv::Trigger::Request> /*request*/,
-    std::shared_ptr<std_srvs::srv::Trigger::Response> response) {
+    std::shared_ptr<std_srvs::srv::Trigger::Response> response)
+{
     g_advance_simulation.store(true);
-    // Simulate advancing the simulation in the main loop
     while (g_advance_simulation.load() && rclcpp::ok() && !g_terminate_requested.load()) {
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
@@ -103,7 +63,7 @@ void advance_simulation_callback(
     RCLCPP_INFO(rclcpp::get_logger("main"), "Simulation advanced");
 }
 
-// Function to run the single-threaded executor in a separate thread
+// Function to run the ROS2 executor in a separate thread
 void run_executor(const std::shared_ptr<rclcpp::executors::SingleThreadedExecutor>& executor) {
     while (rclcpp::ok() && !g_terminate_requested.load()) {
         executor->spin_some();
@@ -111,247 +71,145 @@ void run_executor(const std::shared_ptr<rclcpp::executors::SingleThreadedExecuto
     }
 }
 
-std::shared_ptr<chrono::ChBody> CreateMobileBase(
-    chrono::ChSystemSMC& sys,
-    const Vector3D& position,
-    double mass = 10.0,
-    const Vector3D& size = Vector3D(0.2, 0.2, 0.1)) {
-
-    // Create contact material (SMC)
-    auto contact_material = chrono_types::make_shared<chrono::ChContactMaterialSMC>();
-    contact_material->SetFriction(0.2f);
-    contact_material->SetRestitution(0.1f);
-    contact_material->SetYoungModulus(2e5f);
-    contact_material->SetPoissonRatio(0.3f);
-
-    // Calculate density from mass and volume
-    double volume = size.x * size.y * size.z;
-    double density = mass / volume;
-
-    // Create the mobile base with specified density and contact material
-    auto base = chrono_types::make_shared<chrono::ChBodyEasyBox>(
-        size.x, size.y, size.z, density, true, true, contact_material);
-    base->SetPos(position.ToChronoVector());
-    base->SetFixed(false);
-    sys.Add(base);
-
-    // Set a visual material
-    auto visual_material = chrono_types::make_shared<chrono::ChVisualMaterial>();
-    visual_material->SetDiffuseColor(chrono::ChColor(0.4f, 0.4f, 0.8f));
-    base->GetVisualShape(0)->SetMaterial(0, visual_material);
-
-    return base;
-}
+using namespace chrono;
+using namespace chrono::irrlicht;
 
 int main(int argc, char* argv[]) {
-    // Initialize ROS2
+    // ---------------------------
+    // ROS2 Initialization
+    // ---------------------------
     rclcpp::init(argc, argv);
-    // Set up signal handler for graceful termination
     std::signal(SIGINT, signal_handler);
-
-    // Create ROS2 node
-    auto node = rclcpp::Node::make_shared("chrono_triangle_sim_node");
-    // Create service to advance simulation (Optional)
+    auto node = rclcpp::Node::make_shared("chrono_spirit_triangle_sim_node");
     auto service = node->create_service<std_srvs::srv::Trigger>("advance_simulation", &advance_simulation_callback);
-    // Create a single-threaded executor and add the node
     auto executor = std::make_shared<rclcpp::executors::SingleThreadedExecutor>();
     executor->add_node(node);
-    // Launch the executor in its own thread
     std::thread executor_thread(run_executor, executor);
 
-    // Set the data path for Chrono assets
-    chrono::SetChronoDataPath("/usr/local/share/chrono/data/");
-    // Create Chrono system
-    chrono::ChSystemSMC sys;
+    // ---------------------------
+    // Chrono System Setup
+    // ---------------------------
+    SetChronoDataPath("/usr/local/share/chrono/data/");
+    ChSystemSMC sys;
+    sys.SetGravitationalAcceleration(ChVector3d(0, 0, -9.81));
 
-    // Set gravitational acceleration
-    Vector3D gravity(0.0, 0.0, -9.81);
-    sys.SetGravitationalAcceleration(gravity.ToChronoVector());
-
-    // Initialize collision system
-    auto collsys = chrono_types::make_shared<chrono::ChCollisionSystemBullet>();
+    auto collsys = chrono_types::make_shared<ChCollisionSystemBullet>();
     sys.SetCollisionSystem(collsys);
-    // Set number of threads for Chrono, collision, and eigen
     sys.SetNumThreads(4, 8, 1);
-    // Set solver type
-    sys.SetSolverType(chrono::ChSolver::Type::BARZILAIBORWEIN);
+    collsys->SetNumThreads(4);
+    sys.SetSolverType(ChSolver::Type::BARZILAIBORWEIN);
 
-    // Simulation step size
     constexpr double step_size = 0.001;
 
-    // Initialize terrain
-    chrono::vehicle::SCMTerrain terrain(&sys);
-    constexpr double terrain_length = 2.0;
-    constexpr double terrain_width = 2.0;
-    constexpr double mesh_resolution = 0.02;
+    // ---------------------------
+    // Terrain Setup
+    // ---------------------------
+    vehicle::SCMTerrain terrain(&sys);
+    double terrain_length = 20;
+    double terrain_width  = 20;
+    double mesh_resolution = 0.02;
     terrain.Initialize(terrain_length, terrain_width, mesh_resolution);
-
-    // Set terrain visual material
-    auto terrain_material = chrono_types::make_shared<chrono::ChVisualMaterial>();
-    terrain_material->SetDiffuseColor(chrono::ChColor(0.9f, 0.8f, 0.6f));
+    auto terrain_material = chrono_types::make_shared<ChVisualMaterial>();
+    terrain_material->SetDiffuseColor(ChColor(0.9f, 0.8f, 0.6f));
     terrain.GetMesh()->SetMaterial(0, terrain_material);
     terrain.GetMesh()->SetWireframe(false);
+    // Set constant soil parameters
+    terrain.SetSoilParameters(0.2e8, 0, 1.1, 0, 30, 0.01, 0.25e8, 3e4);
+    terrain.EnableBulldozing(false);
 
-    // Define initial positions of the three mobile bases forming a triangle
-    Vector3D posA(-0.5, 0.0, 0.05);
-    Vector3D posB(0.5, 0.0, 0.05);
-    Vector3D posC(0.0, 0.866, 0.05); // 0.866 ≈ sqrt(3)/2 for equilateral triangle
+    // ---------------------------
+    // Create Spirit Robots
+    // ---------------------------
+    // Define positions for three Spirit robots (arranged in a triangle)
+    ChVector3d spirit0_position(0, 0, 0.19);
+    ChVector3d spirit1_position(1, 0.25, 0.19);
+    ChVector3d spirit2_position(0, 2, 0.19);
 
-    // Create mobile bases
-    auto baseA = CreateMobileBase(sys, posA);
-    auto baseB = CreateMobileBase(sys, posB);
-    auto baseC = CreateMobileBase(sys, posC);
-
-    // Create linear position motors for the arms
-    auto armAB = chrono_types::make_shared<chrono::ChLinkMotorLinearPosition>();
-    auto armBC = chrono_types::make_shared<chrono::ChLinkMotorLinearPosition>();
-    auto armCA = chrono_types::make_shared<chrono::ChLinkMotorLinearPosition>();
-
-    // Lambda function to initialize arms between two bodies
-    auto initArm = [&](const std::shared_ptr<chrono::ChLinkMotorLinearPosition>& arm,
-                      const std::shared_ptr<chrono::ChBody>& body1,
-                      const std::shared_ptr<chrono::ChBody>& body2) {
-        // Get positions of the two bodies
-        auto p1 = body1->GetPos();
-        auto p2 = body2->GetPos();
-        Vector3D pos1(p1.x(), p1.y(), p1.z());
-        Vector3D pos2(p2.x(), p2.y(), p2.z());
-
-        // Calculate direction and midpoint
-        Vector3D dir = (pos2 - pos1).GetNormalized();
-        Vector3D mid = pos1 + (pos2 - pos1) * 0.5;
-
-        // Calculate rotation angle for the arm
-        double angle = std::atan2(dir.y, dir.x);
-        chrono::ChQuaternion<> rot;
-        // Rotate around the Z-axis to align with the direction of the link
-        rot.SetFromAngleAxis(angle, chrono::ChVector3<>(0, 0, 1));
-
-        // Initialize the arm with the calculated frame
-        // The frame is defined at the midpoint with the calculated rotation
-        arm->Initialize(body1, body2, chrono::ChFrame<>(mid.ToChronoVector(), rot));
-        sys.AddLink(arm);
-
-        // Create the visual shape (box) to represent the arm
-        auto box_shape = chrono_types::make_shared<chrono::ChVisualShapeBox>(1, 0.02, 0.02); // Length: 1m, Thickness: 0.02m
-        box_shape->SetColor(chrono::ChColor(1.0f, 0.0f, 0.0f)); // Optional: Set color to red
-
-        // Define the local frame for the visual shape
-        // Position the box so that it spans from body1 to body2
-        // Since the box is centered at the link's frame, no additional translation is needed
-        chrono::ChFrame<> box_frame(chrono::ChVector3<>(0, 0, 0), chrono::QUNIT);
-
-        // Add the visual shape with the defined frame
-        arm->AddVisualShape(box_shape, box_frame);
+    // For docking, define truss attachment positions on the robot (example values)
+    std::vector<ChVector3d> truss_positions = {
+        ChVector3d(-0.25, 0, 0.025)  // This example uses one truss per robot
     };
 
-    // Initialize all three arms to form a triangle
-    initArm(armAB, baseA, baseB);
-    initArm(armBC, baseB, baseC);
-    initArm(armCA, baseC, baseA);
+    // Create a SpiritFactory to build robots
+    SpiritFactory spiritFactory(&sys);
 
-    // Set up Irrlicht visualization
-    auto vis = chrono_types::make_shared<chrono::irrlicht::ChVisualSystemIrrlicht>();
-    vis->SetWindowSize(1600, 1200);
-    vis->SetWindowTitle("3-Base Triangle with Sinusoidal Arms");
-    vis->SetCameraVertical(chrono::CameraVerticalDir::Z);
-    vis->Initialize();
-    vis->AddSkyBox();
-    vis->AddTypicalLights();
+    // Build three Spirit robots with different orientations
+    std::unique_ptr<Spirit> spirit0 = spiritFactory.BuildSpirit(spirit0_position, QUNIT, truss_positions);
+    std::unique_ptr<Spirit> spirit1 = spiritFactory.BuildSpirit(spirit1_position, Q_ROTATE_X_TO_Y, truss_positions);
+    std::unique_ptr<Spirit> spirit2 = spiritFactory.BuildSpirit(spirit2_position, Q_FLIP_AROUND_Z, truss_positions);
 
-    // Configure camera position and target
-    Vector3D camPos(0.0, -1.5, 0.75);
-    Vector3D camTarget(0.0, 0.0, 0.0);
-    vis->AddCamera(camPos.ToChronoVector(), camTarget.ToChronoVector());
+    // Enable collisions and add moving terrain patches for each robot
+    spirit0->AddMovingPatchesAndCollisions(terrain);
+    spirit1->AddMovingPatchesAndCollisions(terrain);
+    spirit2->AddMovingPatchesAndCollisions(terrain);
 
-    vis->EnableShadows();
-    vis->AttachSystem(&sys);
+    // Dock the robots via their trusses to form a closed loop
+    spirit0->DockTruss(0, spirit1->m_body, ChVector3d(-0.25, 0, 0.025));
+    spirit1->DockTruss(0, spirit2->m_body, ChVector3d(-0.25, 0, 0.025));
+    spirit2->DockTruss(0, spirit0->m_body, ChVector3d(-0.25, 0, 0.025));
 
-    RCLCPP_INFO(node->get_logger(), "Triangle simulation node started. Running simulation...");
+    // Compute baseline distances between spirit robots (used as "rest" lengths)
+    double L01 = (spirit1_position - spirit0_position).Length();
+    double L12 = (spirit2_position - spirit1_position).Length();
+    double L20 = (spirit0_position - spirit2_position).Length();
 
-    // Calculate base length and sinusoidal parameters
-    Vector3D diff = posB - posA;
-    double base_length = diff.Length();
-    double amplitude = 2;
-    double frequency = 5.0;
-    double sim_time = 0.0;
+    // Sinusoidal parameters for truss (arm) length variation
+    double amplitude = 0.1;  // Change in length amplitude
+    double frequency = 1.0;  // Frequency (Hz)
 
-// Main simulation loop with continuous advancement
-while (rclcpp::ok() && vis->Run() && !g_terminate_requested.load()) {
-    sim_time = sys.GetChTime();
+    // ---------------------------
+    // Visualization Setup (Irrlicht)
+    // ---------------------------
+    auto vis_irr = chrono_types::make_shared<ChVisualSystemIrrlicht>();
+    vis_irr->SetWindowSize(1600, 1200);
+    vis_irr->SetWindowTitle("3 Spirit Robots Connected in a Triangle");
+    vis_irr->SetCameraVertical(CameraVerticalDir::Z);
+    vis_irr->Initialize();
+    vis_irr->AddSkyBox();
+    vis_irr->AddTypicalLights();
+    vis_irr->AddCamera(ChVector3d(0, -2.0, 1.4), ChVector3d(0, 0, 0.5));
+    vis_irr->EnableShadows();
+    vis_irr->AttachSystem(&sys);
 
-    // Begin rendering the scene
-    vis->BeginScene();
-    vis->Render();
-    vis->EndScene();
+    RCLCPP_INFO(node->get_logger(), "Chrono simulation node started. Running simulation...");
 
-    // Calculate desired lengths for each arm using sinusoidal functions
-    double current_length_AB = base_length + amplitude * std::sin(2.0 * PI * frequency * sim_time);
-    double current_length_BC = base_length + amplitude * std::sin(2.0 * PI * frequency * sim_time + PI / 3.0);
-    double current_length_CA = base_length + amplitude * std::sin(2.0 * PI * frequency * sim_time + 2.0 * PI / 3.0);
+    // ---------------------------
+    // Main Simulation Loop
+    // ---------------------------
+    double sim_time = sys.GetChTime();
+    while (rclcpp::ok() && vis_irr->Run() && !g_terminate_requested.load()) {
+        sim_time = sys.GetChTime();
 
-    // Update motor functions to set desired arm lengths
-    armAB->SetMotorFunction(chrono_types::make_shared<chrono::ChFunctionConst>(current_length_AB));
-    armBC->SetMotorFunction(chrono_types::make_shared<chrono::ChFunctionConst>(current_length_BC));
-    armCA->SetMotorFunction(chrono_types::make_shared<chrono::ChFunctionConst>(current_length_CA));
+        // Compute desired truss lengths for each connection using sinusoidal functions:
+        // (Phase offsets: 0, PI/3, and 2*PI/3 so that the arms vary with a phase difference.)
+        double desired_length_01 = L01 + amplitude * std::sin(2.0 * PI * frequency * sim_time + 0.0);
+        double desired_length_12 = L12 + amplitude * std::sin(2.0 * PI * frequency * sim_time + PI / 3.0);
+        double desired_length_20 = L20 + amplitude * std::sin(2.0 * PI * frequency * sim_time + 2.0 * PI / 3.0);
 
-    RCLCPP_INFO(node->get_logger(), "Sim Time: %.3f | Arm AB Length: %.3f | Arm BC Length: %.3f | Arm CA Length: %.3f",
-                sim_time, current_length_AB, current_length_BC, current_length_CA);
+        // Update the desired arm (truss) lengths for each Spirit connection.
+        // (Assuming each spirit's first truss [index 0] corresponds to its docking connection.)
+        spirit0->m_trusses[0].SetArmDesiredLength(desired_length_01);
+        spirit1->m_trusses[0].SetArmDesiredLength(desired_length_12);
+        spirit2->m_trusses[0].SetArmDesiredLength(desired_length_20);
 
-    // Advance the simulation by one step
-    sys.DoStepDynamics(step_size);
+        // (Optional) Log current simulation time and desired lengths
+        RCLCPP_INFO(node->get_logger(), "Sim Time: %.3f | Desired Lengths: 01=%.3f, 12=%.3f, 20=%.3f",
+                    sim_time, desired_length_01, desired_length_12, desired_length_20);
 
+        // Render the scene
+        vis_irr->BeginScene();
+        vis_irr->Render();
+        vis_irr->EndScene();
 
-    // Get current positions of the mobile bases
-    chrono::ChVector3<> posA_current = baseA->GetPos();
-    chrono::ChVector3<> posB_current = baseB->GetPos();
-    chrono::ChVector3<> posC_current = baseC->GetPos();
-
-    // Calculate relative positions
-    chrono::ChVector3<> relBA = posB_current - posA_current;
-    chrono::ChVector3<> relCA = posC_current - posA_current;
-
-    // Print absolute and relative positions
-    RCLCPP_INFO(node->get_logger(), "Positions:");
-    RCLCPP_INFO(node->get_logger(), "  Base A: (%.3f, %.3f, %.3f)", posA_current.x(), posA_current.y(), posA_current.z());
-    RCLCPP_INFO(node->get_logger(), "  Base B: (%.3f, %.3f, %.3f)", posB_current.x(), posB_current.y(), posB_current.z());
-    RCLCPP_INFO(node->get_logger(), "  Base C: (%.3f, %.3f, %.3f)", posC_current.x(), posC_current.y(), posC_current.z());
-    RCLCPP_INFO(node->get_logger(), "Relative Positions:");
-    RCLCPP_INFO(node->get_logger(), "  BA: (%.3f, %.3f, %.3f)", relBA.x(), relBA.y(), relBA.z());
-    RCLCPP_INFO(node->get_logger(), "  CA: (%.3f, %.3f, %.3f)", relCA.x(), relCA.y(), relCA.z());
-
-}
-
-    // Clean up executor thread
-    if (executor_thread.joinable()) {
-        executor_thread.join();
+        // Advance the simulation
+        sys.DoStepDynamics(step_size);
     }
 
-    // Shutdown ROS2
+    // Ensure the executor thread is joined before shutting down
+    if (executor_thread.joinable())
+        executor_thread.join();
+
     rclcpp::shutdown();
     return 0;
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
