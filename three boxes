@@ -99,7 +99,7 @@ int main(int argc, char* argv[]) {
     collsys->SetNumThreads(4);
     sys.SetSolverType(ChSolver::Type::BARZILAIBORWEIN);
 
-    constexpr double step_size = 0.001;
+    constexpr double step_size = 0.1;
 
     vehicle::SCMTerrain terrain(&sys);
     double terrain_length = 20;
