@@ -99,7 +99,7 @@ int main(int argc, char* argv[]) {
     collsys->SetNumThreads(4);
     sys.SetSolverType(ChSolver::Type::BARZILAIBORWEIN);
 
-    constexpr double step_size = 0.1;
+    constexpr double step_size = 0.001;
 
     vehicle::SCMTerrain terrain(&sys);
     double terrain_length = 20;
@@ -149,7 +149,7 @@ int main(int argc, char* argv[]) {
     double L20 = (pos0 - pos2).Length();
 
     // Sinusoidal parameters for truss (arm) extension/contraction:
-    double amplitude = 0.001;  // How much the length changes (meters)
+    double amplitude = 0.1;  // How much the length changes (meters)
     double frequency = 1.0;  // Oscillation frequency in Hz
 
     // ---------------------------
