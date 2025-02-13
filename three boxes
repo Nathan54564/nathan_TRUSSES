@@ -1,10 +1,15 @@
 // =============================================================================
 // Example Simulation: Three Spirit Robots Connected in a Triangle
 <<<<<<< HEAD
+<<<<<<< HEAD
 // Each robot is built using SpiritFactory and is attached to the next via a truss.
 // The truss (arm) lengths are updated sinusoidally over time, and each truss
 // is attached with a spherical joint so that it can freely rotate about the
 // attachment point.
+=======
+// Each robot is built using SpiritFactory and is docked to the next via a truss.
+// The truss (arm) lengths are updated sinusoidally over time.
+>>>>>>> parent of da586ce (Update three boxes)
 =======
 // Each robot is built using SpiritFactory and is docked to the next via a truss.
 // The truss (arm) lengths are updated sinusoidally over time.
@@ -147,6 +152,7 @@ int main(int argc, char* argv[]) {
     spirit2->AddMovingPatchesAndCollisions(terrain);
 
 <<<<<<< HEAD
+<<<<<<< HEAD
     // Instead of fixed docking, we create spherical joints between each Spirit's
     // truss connector and the target spirit's body so that the truss can rotate freely.
     // (Assuming each Spirit's first truss is in m_trusses[0] and its connector body is m_body.)
@@ -171,6 +177,13 @@ int main(int argc, char* argv[]) {
     spirit2->DockTruss(0, spirit0->m_body, ChVector3d(-0.25, 0, 0.025));
 >>>>>>> parent of da586ce (Update three boxes)
 
+=======
+    // Dock the spirits to form a closed triangle loop
+    spirit0->DockTruss(0, spirit1->m_body, ChVector3d(-0.25, 0, 0.025));
+    spirit1->DockTruss(0, spirit2->m_body, ChVector3d(-0.25, 0, 0.025));
+    spirit2->DockTruss(0, spirit0->m_body, ChVector3d(-0.25, 0, 0.025));
+
+>>>>>>> parent of da586ce (Update three boxes)
     // Compute baseline (rest) lengths from the initial positions:
     double L01 = (pos1 - pos0).Length();
     double L12 = (pos2 - pos1).Length();
@@ -184,6 +197,9 @@ int main(int argc, char* argv[]) {
     // Sinusoidal parameters for truss (arm) extension/contraction:
     double amplitude = 0.001;  // How much the length changes (meters)
     double frequency = 1.0;  // Oscillation frequency in Hz
+<<<<<<< HEAD
+>>>>>>> parent of da586ce (Update three boxes)
+=======
 >>>>>>> parent of da586ce (Update three boxes)
 
     // ---------------------------
