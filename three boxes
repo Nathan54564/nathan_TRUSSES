@@ -13,11 +13,11 @@
 #include <atomic>
 #include <csignal>
 #include <cmath>
-#include <fstream>
+#include <string>
 
 // Chrono Packages
 #include "chrono/physics/ChSystemSMC.h"
-#include "chrono/utils/ChUtilsInputOutput.h"  // for ChWriterCSV
+#include "chrono/utils/ChUtilsInputOutput.h"  // For ChWriterCSV
 #include "chrono/collision/bullet/ChCollisionSystemBullet.h"
 #include "chrono_irrlicht/ChVisualSystemIrrlicht.h"
 #include "chrono_vehicle/terrain/SCMTerrain.h"
@@ -90,7 +90,7 @@ int main(int argc, char* argv[]) {
     std::thread executor_thread(run_executor, executor);
 
     // ---------------------------
-    // Chrono System & Terrain
+    // Chrono System & Terrain Setup
     // ---------------------------
     SetChronoDataPath("/usr/local/share/chrono/data/");
     ChSystemSMC sys;
@@ -120,7 +120,7 @@ int main(int argc, char* argv[]) {
     ChVector3d pos1(1, 0.25, 0.19);
     ChVector3d pos2(0, 2, 0.19);
 
-    // Single truss position per robot
+    // Use a single truss position per robot
     std::vector<ChVector3d> truss_positions = { ChVector3d(0, 0, 0) };
 
     SpiritFactory factory(&sys);
@@ -132,7 +132,7 @@ int main(int argc, char* argv[]) {
     spirit1->AddMovingPatchesAndCollisions(terrain);
     spirit2->AddMovingPatchesAndCollisions(terrain);
 
-    // Use fixed docking for now.
+    // Dock the trusses rigidly (no free rotation)
     spirit0->DockTruss(0, spirit1->m_body, ChVector3d(0, 0, 0));
     spirit1->DockTruss(0, spirit2->m_body, ChVector3d(0, 0, 0));
     spirit2->DockTruss(0, spirit0->m_body, ChVector3d(0, 0, 0));
@@ -147,9 +147,9 @@ int main(int argc, char* argv[]) {
     // ---------------------------
     // CSV Logging Setup
     // ---------------------------
-    // Create a CSV writer object with a space as delimiter (or choose comma)
-    utils::ChWriterCSV csv(" ");
-    // Write header
+    // Create a CSV writer using comma as a delimiter.
+    utils::ChWriterCSV csv(",");
+    // Write the header row
     csv << "Time" << "Spirit0_x" << "Spirit0_y" << "Spirit0_z"
         << "Spirit1_x" << "Spirit1_y" << "Spirit1_z"
         << "Spirit2_x" << "Spirit2_y" << "Spirit2_z" << std::endl;
@@ -171,13 +171,13 @@ int main(int argc, char* argv[]) {
     RCLCPP_INFO(node->get_logger(), "Triangle simulation node started. Running...");
 
     // ---------------------------
-    // Main Simulation Loop: CSV Logging of Positions
+    // Main Simulation Loop: Log Robot Positions to CSV
     // ---------------------------
     double sim_time = sys.GetChTime();
     while (rclcpp::ok() && vis_irr->Run() && !g_terminate_requested.load()) {
         sim_time = sys.GetChTime();
 
-        // Calculate sinusoidal desired truss lengths (even if not used for CSV)
+        // Compute sinusoidal desired truss lengths (even if not used for CSV logging)
         double desired_length_01 = L01 + amplitude * std::sin(2.0 * PI * frequency * sim_time);
         double desired_length_12 = L12 + amplitude * std::sin(2.0 * PI * frequency * sim_time + PI/3.0);
         double desired_length_20 = L20 + amplitude * std::sin(2.0 * PI * frequency * sim_time + 2.0*PI/3.0);
@@ -186,16 +186,16 @@ int main(int argc, char* argv[]) {
         spirit1->m_trusses[0].SetArmDesiredLength(desired_length_12);
         spirit2->m_trusses[0].SetArmDesiredLength(desired_length_20);
 
-        // Get the positions of each Spirit robot's body
+        // Get positions of each robot
         ChVector3d pos_spirit0 = spirit0->m_body->GetPos();
         ChVector3d pos_spirit1 = spirit1->m_body->GetPos();
         ChVector3d pos_spirit2 = spirit2->m_body->GetPos();
 
-        // Write a new CSV row: time, then each robot's x, y, z positions.
+        // Write a CSV row: time, then x, y, z for each robot
         csv << sim_time
             << pos_spirit0.x() << pos_spirit0.y() << pos_spirit0.z()
             << pos_spirit1.x() << pos_spirit1.y() << pos_spirit1.z()
-            << pos_spirit2.x() << pos_spirit2.y() << pos_spirit2.z() << std::endl;
+            << pos_spirit2.x() << pos_spirit2.y() << pos_spirit2.z() << std::endl();
 
         vis_irr->BeginScene();
         vis_irr->Render();
@@ -204,8 +204,9 @@ int main(int argc, char* argv[]) {
         sys.DoStepDynamics(step_size);
     }
 
-    // Write the CSV file to disk (choose a filename and location as needed)
-    csv.WriteToFile("spirit_positions.csv");
+    // Write the CSV file to the Downloads folder:
+    std::string downloads_path = std::string(getenv("HOME")) + "/Downloads/spirit_positions.csv";
+    csv.WriteToFile(downloads_path);
 
     if (executor_thread.joinable()) {
         executor_thread.join();
