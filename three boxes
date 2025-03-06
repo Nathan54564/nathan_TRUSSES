@@ -3,6 +3,8 @@
 // Each robot is built using SpiritFactory and is attached to the next via a truss.
 // The truss (arm) lengths are updated sinusoidally over time. We fix the error by
 // adding a public GetConnectorBody() method in the Truss class, then using it here.
+// Now we also write the output to a CSV file in the Downloads folder, with columns
+// for time and each robot's x, y, z positions. The parentheses on std::endl() are removed.
 // =============================================================================
 
 #include <cstddef>
@@ -102,7 +104,7 @@ int main(int argc, char* argv[]) {
     collsys->SetNumThreads(4);
     sys.SetSolverType(ChSolver::Type::BARZILAIBORWEIN);
 
-    double step_size = 0.001;
+    constexpr double step_size = 0.001;
 
     vehicle::SCMTerrain terrain(&sys);
     terrain.Initialize(20, 20, 0.02);
@@ -120,7 +122,7 @@ int main(int argc, char* argv[]) {
     ChVector3d pos1(1, 0.25, 0.19);
     ChVector3d pos2(0, 2, 0.19);
 
-    // Use a single truss position per robot
+    // Single truss position per robot
     std::vector<ChVector3d> truss_positions = { ChVector3d(0, 0, 0) };
 
     SpiritFactory factory(&sys);
@@ -147,9 +149,9 @@ int main(int argc, char* argv[]) {
     // ---------------------------
     // CSV Logging Setup
     // ---------------------------
-    // Create a CSV writer using comma as a delimiter.
+    // Create a CSV writer using comma as delimiter.
     utils::ChWriterCSV csv(",");
-    // Write the header row
+    // Write header row
     csv << "Time" << "Spirit0_x" << "Spirit0_y" << "Spirit0_z"
         << "Spirit1_x" << "Spirit1_y" << "Spirit1_z"
         << "Spirit2_x" << "Spirit2_y" << "Spirit2_z" << std::endl;
@@ -177,7 +179,7 @@ int main(int argc, char* argv[]) {
     while (rclcpp::ok() && vis_irr->Run() && !g_terminate_requested.load()) {
         sim_time = sys.GetChTime();
 
-        // Compute sinusoidal desired truss lengths (even if not used for CSV logging)
+        // Calculate sinusoidal desired truss lengths
         double desired_length_01 = L01 + amplitude * std::sin(2.0 * PI * frequency * sim_time);
         double desired_length_12 = L12 + amplitude * std::sin(2.0 * PI * frequency * sim_time + PI/3.0);
         double desired_length_20 = L20 + amplitude * std::sin(2.0 * PI * frequency * sim_time + 2.0*PI/3.0);
@@ -195,7 +197,8 @@ int main(int argc, char* argv[]) {
         csv << sim_time
             << pos_spirit0.x() << pos_spirit0.y() << pos_spirit0.z()
             << pos_spirit1.x() << pos_spirit1.y() << pos_spirit1.z()
-            << pos_spirit2.x() << pos_spirit2.y() << pos_spirit2.z() << std::endl();
+            << pos_spirit2.x() << pos_spirit2.y() << pos_spirit2.z()
+            << std::endl;  // <-- remove parentheses
 
         vis_irr->BeginScene();
         vis_irr->Render();
@@ -204,7 +207,7 @@ int main(int argc, char* argv[]) {
         sys.DoStepDynamics(step_size);
     }
 
-    // Write the CSV file to the Downloads folder:
+    // Write the CSV file to the Downloads folder
     std::string downloads_path = std::string(getenv("HOME")) + "/Downloads/spirit_positions.csv";
     csv.WriteToFile(downloads_path);
 
