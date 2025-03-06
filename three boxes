@@ -131,9 +131,8 @@ int main(int argc, char* argv[]) {
     // ---------------------------
     // Dock the Truss
     // ---------------------------
-    // Connect spirit0 and spirit1 with one truss.
-    // The offset vector should accurately represent the physical attachment point.
-    spirit0->DockTruss(0, spirit1->m_body, ChVector3d(-0.25, 0, 0.025));
+    // Connect spirit0 and spirit1 with one truss using an offset of (0,0,0)
+    spirit0->DockTruss(0, spirit1->m_body, ChVector3d(0, 0, 0));
 
     // Baseline length between the two robots
     double L01 = (pos1 - pos0).Length();
