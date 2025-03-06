@@ -1,7 +1,7 @@
 // =============================================================================
-// Example Simulation: Two Spirit Robots Connected by Two Trusses
-// Each robot is built using SpiritFactory and is attached to the other via two trusses.
-// The truss (arm) lengths are updated sinusoidally over time.
+// Example Simulation: Two Spirit Robots Connected by One Truss
+// The Spirit robots are built using SpiritFactory and are connected by a single truss.
+// The truss (arm) length is updated sinusoidally over time.
 // =============================================================================
 
 #include <cstddef>
@@ -26,10 +26,10 @@
 #include "std_srvs/srv/trigger.hpp"
 #include <std_msgs/msg/int64.hpp>
 
-// Our custom Spirit and Truss classes (Truss now has GetConnectorBody())
+// Our custom Spirit and Truss classes
 #include "sim_tools/SpiritFactory.h"
 #include "sim_tools/Spirit.h"
-#include "sim_tools/Truss.h"
+#include "sim_tools/Truss.h"  // now has GetConnectorBody()
 #include "sim_tools/VariableSoilParams.h"
 #include "sim_tools/SimpleMovingAverage.h"
 #include "sim_tools/SetpointController.h"
@@ -52,7 +52,7 @@ void signal_handler(int signum) {
     }
 }
 
-// ROS2 service callback to advance simulation (optional)
+// ROS2 service callback
 void advance_simulation_callback(
     const std::shared_ptr<std_srvs::srv::Trigger::Request> /*request*/,
     std::shared_ptr<std_srvs::srv::Trigger::Response> response)
@@ -66,7 +66,7 @@ void advance_simulation_callback(
     RCLCPP_INFO(rclcpp::get_logger("main"), "Simulation advanced");
 }
 
-// Spin the ROS2 executor in a separate thread
+// Spin in a separate thread for ROS2 callbacks
 void run_executor(const std::shared_ptr<rclcpp::executors::SingleThreadedExecutor>& executor) {
     while (rclcpp::ok() && !g_terminate_requested.load()) {
         executor->spin_some();
@@ -113,43 +113,41 @@ int main(int argc, char* argv[]) {
     // ---------------------------
     // Create Spirit Robots
     // ---------------------------
-    // Define positions for the two robots
+    // Define positions for two robots
     ChVector3d pos0(0, 0, 0.19);
-    ChVector3d pos1(1, 0, 0.19);
+    ChVector3d pos1(1, 0.25, 0.19);
 
-    // Define two truss attachment positions per robot (for example, one on the right and one on the left)
-    std::vector<ChVector3d> truss_positions = {
-        ChVector3d(0.25, 0, 0.025),   // Attachment point for the first truss
-        ChVector3d(-0.25, 0, 0.025)   // Attachment point for the second truss
-    };
+    // Single truss position per robot (if needed by factory)
+    std::vector<ChVector3d> truss_positions = { ChVector3d(0.25, 0, 0.025) };
 
     SpiritFactory factory(&sys);
     auto spirit0 = factory.BuildSpirit(pos0, QUNIT, truss_positions);
     auto spirit1 = factory.BuildSpirit(pos1, Q_ROTATE_X_TO_Y, truss_positions);
 
-    // Enable collisions with the terrain
+    // Enable collisions between the robots and the terrain
     spirit0->AddMovingPatchesAndCollisions(terrain);
     spirit1->AddMovingPatchesAndCollisions(terrain);
 
-    // Dock the two trusses between the two robots.
-    // For the first truss, use the offset corresponding to the first attachment point.
-    spirit0->DockTruss(0, spirit1->m_body, ChVector3d(0.25, 0, 0.025));
-    // For the second truss, use the offset corresponding to the second attachment point.
-    spirit0->DockTruss(1, spirit1->m_body, ChVector3d(-0.25, 0, 0.025));
+    // ---------------------------
+    // Dock the Truss
+    // ---------------------------
+    // Connect spirit0 and spirit1 with one truss.
+    // The offset vector should accurately represent the physical attachment point.
+    spirit0->DockTruss(0, spirit1->m_body, ChVector3d(-0.25, 0, 0.025));
 
-    // Calculate the baseline length between the two robots
+    // Baseline length between the two robots
     double L01 = (pos1 - pos0).Length();
 
     // Oscillation parameters (keep amplitude small to avoid detachment)
-    double amplitude = 0.05;   // 5 cm variation
-    double frequency = 0.5;    // 0.5 Hz
+    double amplitude = 0.05;  // 5 cm variation
+    double frequency = 0.5;   // 0.5 Hz oscillation
 
     // ---------------------------
     // Visualization Setup
     // ---------------------------
     auto vis_irr = chrono_types::make_shared<ChVisualSystemIrrlicht>();
     vis_irr->SetWindowSize(1600, 1200);
-    vis_irr->SetWindowTitle("2 Spirit Robots with Dual Trusses");
+    vis_irr->SetWindowTitle("Two Spirit Robots Connected by One Truss");
     vis_irr->SetCameraVertical(CameraVerticalDir::Z);
     vis_irr->Initialize();
     vis_irr->AddSkyBox();
@@ -158,7 +156,7 @@ int main(int argc, char* argv[]) {
     vis_irr->EnableShadows();
     vis_irr->AttachSystem(&sys);
 
-    RCLCPP_INFO(node->get_logger(), "Dual spirit simulation node started. Running...");
+    RCLCPP_INFO(node->get_logger(), "Dual Spirit simulation node started. Running...");
 
     // ---------------------------
     // Main Simulation Loop
@@ -167,19 +165,16 @@ int main(int argc, char* argv[]) {
     while (rclcpp::ok() && vis_irr->Run() && !g_terminate_requested.load()) {
         sim_time = sys.GetChTime();
 
-        // Calculate desired lengths for each truss using sinusoidal oscillations
-        double desired_length_0 = L01 + amplitude * std::sin(2.0 * PI * frequency * sim_time);
-        double desired_length_1 = L01 + amplitude * std::sin(2.0 * PI * frequency * sim_time + PI/2.0);
+        // Calculate desired truss length sinusoidally.
+        // This is the only truss connecting the two robots.
+        double desired_length_01 = L01 + amplitude * std::sin(2.0 * PI * frequency * sim_time);
 
-        // Update the desired lengths for both trusses on each robot
-        spirit0->m_trusses[0].SetArmDesiredLength(desired_length_0);
-        spirit0->m_trusses[1].SetArmDesiredLength(desired_length_1);
-        spirit1->m_trusses[0].SetArmDesiredLength(desired_length_0);
-        spirit1->m_trusses[1].SetArmDesiredLength(desired_length_1);
+        // Update the truss length on spirit0 (which is docked to spirit1)
+        spirit0->m_trusses[0].SetArmDesiredLength(desired_length_01);
 
         RCLCPP_INFO(node->get_logger(),
-                    "Time=%.3f | Truss0=%.3f | Truss1=%.3f",
-                    sim_time, desired_length_0, desired_length_1);
+                    "Time=%.3f | Truss Length=%.3f",
+                    sim_time, desired_length_01);
 
         // Render the scene
         vis_irr->BeginScene();
