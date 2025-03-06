@@ -118,7 +118,7 @@ int main(int argc, char* argv[]) {
     ChVector3d pos1(1, 0.25, 0.19);
 
     // Single truss position per robot (if needed by factory)
-    std::vector<ChVector3d> truss_positions = { ChVector3d(0.25, 0, 0.025) };
+    std::vector<ChVector3d> truss_positions = { ChVector3d(0, 0, 0) };
 
     SpiritFactory factory(&sys);
     auto spirit0 = factory.BuildSpirit(pos0, QUNIT, truss_positions);
