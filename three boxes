@@ -119,7 +119,7 @@ int main(int argc, char* argv[]) {
     ChVector3d pos2(0, 2, 0.19);
 
     // Single truss position per robot
-    std::vector<ChVector3d> truss_positions = { ChVector3d(0.25, 0, 0.025) };
+    std::vector<ChVector3d> truss_positions = { ChVector3d(0, 0, 0) };
 
     SpiritFactory factory(&sys);
     auto spirit0 = factory.BuildSpirit(pos0, QUNIT, truss_positions);
@@ -134,9 +134,9 @@ int main(int argc, char* argv[]) {
     // Dock the trusses rigidly (no free rotation)
     // If you want free rotation, remove these and create spherical joints using
     // spiritX->m_trusses[0].GetConnectorBody() + spiritY->m_body
-    spirit0->DockTruss(0, spirit1->m_body, ChVector3d(-0.25, 0, 0.025));
-    spirit1->DockTruss(0, spirit2->m_body, ChVector3d(-0.25, 0, 0.025));
-    spirit2->DockTruss(0, spirit0->m_body, ChVector3d(-0.25, 0, 0.025));
+    spirit0->DockTruss(0, spirit1->m_body, ChVector3d(0, 0, 0));
+    spirit1->DockTruss(0, spirit2->m_body, ChVector3d(0, 0, 0));
+    spirit2->DockTruss(0, spirit0->m_body, ChVector3d(0, 0, 0));
 
     // Baseline lengths
     double L01 = (pos1 - pos0).Length();
