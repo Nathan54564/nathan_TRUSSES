@@ -2,9 +2,7 @@
 // Example Simulation: Three Spirit Robots Connected in a Triangle
 // Each robot is built using SpiritFactory and is attached to the next via a truss.
 // The truss (arm) lengths are updated sinusoidally over time, and each truss
-// is connected via a spherical joint (with the joint frame computed as the
-// midpoint between the truss connector and target robot) so that it can freely
-// rotate about the attachment point.
+// is attached via a spherical joint so that it can freely rotate about the attachment point.
 // =============================================================================
 
 #include <cstddef>
@@ -29,10 +27,14 @@
 #include "std_srvs/srv/trigger.hpp"
 #include <std_msgs/msg/int64.hpp>
 
-// Custom Spirit Classes (ensure these paths are correct)
+// Before including the Truss header, expose its private members:
+#define private public
+#include "sim_tools/Truss.h"
+#undef private
+
+// Custom Spirit Classes
 #include "sim_tools/SpiritFactory.h"
 #include "sim_tools/Spirit.h"
-#include "sim_tools/Truss.h"  // Truss should provide GetConnectorBody()
 #include "sim_tools/VariableSoilParams.h"
 #include "sim_tools/SimpleMovingAverage.h"
 #include "sim_tools/SetpointController.h"
@@ -129,10 +131,8 @@ int main(int argc, char* argv[]) {
     // (This example uses one truss per robot.)
     std::vector<ChVector3d> truss_positions = { ChVector3d(0.25, 0, 0.025) };
 
-    // Create the SpiritFactory
+    // Create the SpiritFactory and build three Spirit robots.
     SpiritFactory spiritFactory(&sys);
-
-    // Build three Spirit robots with chosen orientations
     std::unique_ptr<Spirit> spirit0 = spiritFactory.BuildSpirit(pos0, QUNIT, truss_positions);
     std::unique_ptr<Spirit> spirit1 = spiritFactory.BuildSpirit(pos1, Q_ROTATE_X_TO_Y, truss_positions);
     std::unique_ptr<Spirit> spirit2 = spiritFactory.BuildSpirit(pos2, Q_FLIP_AROUND_Z, truss_positions);
@@ -142,37 +142,27 @@ int main(int argc, char* argv[]) {
     spirit1->AddMovingPatchesAndCollisions(terrain);
     spirit2->AddMovingPatchesAndCollisions(terrain);
 
-    // Instead of fixed docking, we now create spherical joints between each Spirit's
-    // truss connector (obtained via GetConnectorBody()) and the target Spirit's body.
-    // The joint frame is computed as the midpoint between the current positions.
-    {
-        // For spirit0's truss attaching to spirit1:
-        ChVector3d pos_conn0 = spirit0->m_trusses[0].GetConnectorBody()->GetPos();
-        ChVector3d pos_body1  = spirit1->m_body->GetPos();
-        ChVector3d joint_frame0 = 0.5 * (pos_conn0 + pos_body1);
-        auto sph0 = chrono_types::make_shared<ChLinkLockSpherical>();
-        sph0->Initialize(spirit0->m_trusses[0].GetConnectorBody(), spirit1->m_body,
-                         ChFrame<>(joint_frame0, QUNIT));
-        sys.AddLink(sph0);
+    // Instead of fixed docking, we create spherical joints between each Spirit's
+    // truss connector body (exposed via our inline accessor) and the target Spirit's body.
+    // Implement the inline GetConnectorBody accessor here:
+    auto GetConnectorBody = [](sim_tools::Truss &truss) -> std::shared_ptr<ChBody> {
+        return truss.m_body; // m_body is now accessible due to our macro hack
+    };
 
-        // For spirit1's truss attaching to spirit2:
-        ChVector3d pos_conn1 = spirit1->m_trusses[0].GetConnectorBody()->GetPos();
-        ChVector3d pos_body2  = spirit2->m_body->GetPos();
-        ChVector3d joint_frame1 = 0.5 * (pos_conn1 + pos_body2);
-        auto sph1 = chrono_types::make_shared<ChLinkLockSpherical>();
-        sph1->Initialize(spirit1->m_trusses[0].GetConnectorBody(), spirit2->m_body,
-                         ChFrame<>(joint_frame1, QUNIT));
-        sys.AddLink(sph1);
+    auto sph0 = chrono_types::make_shared<ChLinkLockSpherical>();
+    sph0->Initialize(GetConnectorBody(spirit0->m_trusses[0]), spirit1->m_body,
+                     ChFrame<>(spirit1->m_body->GetPos() + ChVector3d(-0.25, 0, 0.025), QUNIT));
+    sys.AddLink(sph0);
 
-        // For spirit2's truss attaching to spirit0:
-        ChVector3d pos_conn2 = spirit2->m_trusses[0].GetConnectorBody()->GetPos();
-        ChVector3d pos_body0  = spirit0->m_body->GetPos();
-        ChVector3d joint_frame2 = 0.5 * (pos_conn2 + pos_body0);
-        auto sph2 = chrono_types::make_shared<ChLinkLockSpherical>();
-        sph2->Initialize(spirit2->m_trusses[0].GetConnectorBody(), spirit0->m_body,
-                         ChFrame<>(joint_frame2, QUNIT));
-        sys.AddLink(sph2);
-    }
+    auto sph1 = chrono_types::make_shared<ChLinkLockSpherical>();
+    sph1->Initialize(GetConnectorBody(spirit1->m_trusses[0]), spirit2->m_body,
+                     ChFrame<>(spirit2->m_body->GetPos() + ChVector3d(-0.25, 0, 0.025), QUNIT));
+    sys.AddLink(sph1);
+
+    auto sph2 = chrono_types::make_shared<ChLinkLockSpherical>();
+    sph2->Initialize(GetConnectorBody(spirit2->m_trusses[0]), spirit0->m_body,
+                     ChFrame<>(spirit0->m_body->GetPos() + ChVector3d(-0.25, 0, 0.025), QUNIT));
+    sys.AddLink(sph2);
 
     // Compute baseline (rest) truss lengths from the initial Spirit positions:
     double L01 = (pos1 - pos0).Length();
@@ -180,8 +170,8 @@ int main(int argc, char* argv[]) {
     double L20 = (pos0 - pos2).Length();
 
     // Sinusoidal parameters for truss extension/contraction:
-    double amplitude = 0.1;  // Change in length (meters)
-    double frequency = 1.0;  // Oscillation frequency in Hz
+    double amplitude = 0.1;  // Meters
+    double frequency = 1.0;  // Hz
 
     // ---------------------------
     // Visualization Setup (Irrlicht)
