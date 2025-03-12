@@ -199,12 +199,15 @@ int main(int argc, char* argv[]) {
 
         // For each robot, update **all four** legs with the same setpoints.
         for (int leg_index = 0; leg_index < 4; ++leg_index) {
+            spirit0->SetAbsDesiredPosition(leg_index, 0);
             spirit0->SetShoulderDesiredPosition(leg_index, shoulderController.getSetpoint());
             spirit0->SetKneeDesiredPosition(leg_index, kneeController.getSetpoint());
 
+            spirit1->SetAbsDesiredPosition(leg_index, 0);
             spirit1->SetShoulderDesiredPosition(leg_index, shoulderController.getSetpoint());
             spirit1->SetKneeDesiredPosition(leg_index, kneeController.getSetpoint());
 
+            spirit2->SetAbsDesiredPosition(leg_index, 0);
             spirit2->SetShoulderDesiredPosition(leg_index, shoulderController.getSetpoint());
             spirit2->SetKneeDesiredPosition(leg_index, kneeController.getSetpoint());
         }
