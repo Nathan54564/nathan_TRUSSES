@@ -102,7 +102,7 @@ int main(int argc, char* argv[]) {
     collsys->SetNumThreads(4);
     sys.SetSolverType(ChSolver::Type::BARZILAIBORWEIN);
 
-    constexpr double step_size = 0.001;
+    constexpr double step_size = 0.00001;
 
     vehicle::SCMTerrain terrain(&sys);
     terrain.Initialize(20, 20, 0.02);
@@ -144,8 +144,8 @@ int main(int argc, char* argv[]) {
     double L20 = (pos0 - pos2).Length();
 
     // Sinusoidal parameters for truss (arm) length modulation
-    double amplitude = 0.05;  // 5 cm variation
-    double frequency = 0.5;   // 0.5 Hz
+    double amplitude = 1;  // 5 cm variation
+    double frequency = 0.00005;   // 0.5 Hz
 
     // ---------------------------
     // CSV Logging Setup
@@ -226,7 +226,7 @@ int main(int argc, char* argv[]) {
     sim_time = sys.GetChTime();
     while (rclcpp::ok() && vis_irr->Run() && !g_terminate_requested.load()) {
         sim_time = sys.GetChTime();
-
+        std::cout << "Simulation Time: " << sim_time << std::endl;
         // Compute desired truss lengths for each connection using sinusoidal functions
         double desired_length_01 = L01 + amplitude * std::sin(2.0 * PI * frequency * sim_time + 0.0);
         double desired_length_12 = L12 + amplitude * std::sin(2.0 * PI * frequency * sim_time + PI/3.0);
