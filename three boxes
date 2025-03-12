@@ -1,8 +1,8 @@
 // =============================================================================
 // Example Simulation: Three Spirit Robots Connected in a Triangle
-// The robots are first commanded to stand up using setpoint controllers,
-// then their connecting trusses (arms) extend and contract sinusoidally.
-// Output is logged to a CSV file in the Downloads folder.
+// The robots are first commanded to stand up using setpoint controllers for
+// **all four legs**, then their connecting trusses (arms) extend and contract
+// sinusoidally. Output is logged to a CSV file in the Downloads folder.
 // =============================================================================
 
 #include <cstddef>
@@ -28,10 +28,10 @@
 #include "std_srvs/srv/trigger.hpp"
 #include <std_msgs/msg/int64.hpp>
 
-// Custom Spirit and Control Classes (ensure these paths are correct)
+// Custom Spirit and Control Classes
 #include "sim_tools/SpiritFactory.h"
 #include "sim_tools/Spirit.h"
-#include "sim_tools/Truss.h"  // now includes GetConnectorBody()
+#include "sim_tools/Truss.h"
 #include "sim_tools/VariableSoilParams.h"
 #include "sim_tools/SimpleMovingAverage.h"
 #include "sim_tools/SetpointController.h"
@@ -50,7 +50,7 @@ std::atomic_bool g_advance_simulation(false);
 void signal_handler(int signum) {
     if (signum == SIGINT) {
         g_terminate_requested.store(true);
-        RCLCPP_INFO(rclcpp::get_logger("main"),
+        RCLCPP_INFO(rclcpp::get_logger("main"), 
                     "Termination signal (CTRL-C) received. Shutting down...");
     }
 }
@@ -174,10 +174,10 @@ int main(int argc, char* argv[]) {
     // ---------------------------
     // Stand-Up Phase: Command the robots to "stand up" using setpoint controllers.
     // ---------------------------
-    // Here, we assume that by adjusting the shoulder and knee desired positions,
-    // the Spirit robot will assume a standing posture.
-    SetpointController shoulderController(0.0, -0.4, -0.4, 0.0);  // (initial position, init velocity, min, max)
-    SetpointController kneeController(0.0, -1.0, -1.0, 0.0);         // adjust these values as needed
+    // We assume that by adjusting all four legs' shoulder and knee angles, the
+    // Spirit robot will assume a standing posture.
+    SetpointController shoulderController(0.0, -0.4, -0.4, 0.0);  // (init pos, init vel, min, max)
+    SetpointController kneeController(0.0, -1.0, -1.0, 0.0);      // adjust these as needed
 
     // Fix the robot bodies briefly during calibration
     spirit0->m_body->SetFixed(true);
@@ -193,28 +193,25 @@ int main(int argc, char* argv[]) {
         vis_irr->Render();
         vis_irr->EndScene();
 
-        // Adjust setpoints so that the robot joints move toward a standing posture.
+        // Adjust setpoints so that the robot joints move toward a standing posture
         shoulderController.adjustSetpointWithVelocity(step_size);
         kneeController.adjustSetpointWithVelocity(step_size);
 
-        // For each robot, set absolute desired positions (if applicable) and joint setpoints.
-        spirit0->SetShoulderDesiredPosition(0, shoulderController.getSetpoint());
-        spirit0->SetShoulderDesiredPosition(1, shoulderController.getSetpoint());
-        spirit0->SetKneeDesiredPosition(0, kneeController.getSetpoint());
-        spirit0->SetKneeDesiredPosition(1, kneeController.getSetpoint());
+        // For each robot, update **all four** legs with the same setpoints.
+        for (int leg_index = 0; leg_index < 4; ++leg_index) {
+            spirit0->SetShoulderDesiredPosition(leg_index, shoulderController.getSetpoint());
+            spirit0->SetKneeDesiredPosition(leg_index, kneeController.getSetpoint());
 
-        spirit1->SetShoulderDesiredPosition(0, shoulderController.getSetpoint());
-        spirit1->SetShoulderDesiredPosition(1, shoulderController.getSetpoint());
-        spirit1->SetKneeDesiredPosition(0, kneeController.getSetpoint());
-        spirit1->SetKneeDesiredPosition(1, kneeController.getSetpoint());
+            spirit1->SetShoulderDesiredPosition(leg_index, shoulderController.getSetpoint());
+            spirit1->SetKneeDesiredPosition(leg_index, kneeController.getSetpoint());
 
-        spirit2->SetShoulderDesiredPosition(0, shoulderController.getSetpoint());
-        spirit2->SetShoulderDesiredPosition(1, shoulderController.getSetpoint());
-        spirit2->SetKneeDesiredPosition(0, kneeController.getSetpoint());
-        spirit2->SetKneeDesiredPosition(1, kneeController.getSetpoint());
+            spirit2->SetShoulderDesiredPosition(leg_index, shoulderController.getSetpoint());
+            spirit2->SetKneeDesiredPosition(leg_index, kneeController.getSetpoint());
+        }
 
         sys.DoStepDynamics(step_size);
     }
+
     // Release the fixed bodies after calibration
     spirit0->m_body->SetFixed(false);
     spirit1->m_body->SetFixed(false);
@@ -260,9 +257,9 @@ int main(int argc, char* argv[]) {
     std::string csv_path = std::string(getenv("HOME")) + "/Downloads/spirit_positions.csv";
     csv.WriteToFile(csv_path);
 
-    if (executor_thread.joinable())
+    if (executor_thread.joinable()) {
         executor_thread.join();
-
+    }
     rclcpp::shutdown();
     return 0;
 }
